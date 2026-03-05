@@ -209,16 +209,22 @@ for (GENOTYPE in as.character(GENOTYPES)) {
       tt_filt <- topTags(qlf[keep_genes, ], n = Inf)$table
       tt_filt$Gene <- rownames(tt_filt)
       colnames(tt_filt)[colnames(tt_filt) == "FDR"] <- "FDR_onlyhigh"
+        
+      mean_df <- data.frame(
+        Gene = rownames(genes_tofilter),
+        mean_exp_control  = mean_control,
+        mean_exp_genotype = mean_genotype,
+        stringsAsFactors = FALSE
+      )
 
       # Merge Stats
       tt_merged <- tt_all %>%
         left_join(tt_filt[, c("Gene", "FDR_onlyhigh")], by = "Gene") %>%
+        left_join(mean_df, by = "Gene") %>%
         mutate(
           low_expression = ifelse(is.na(FDR_onlyhigh), "T", "F"),
           FDR_onlyhigh   = ifelse(is.na(FDR_onlyhigh), 1, FDR_onlyhigh),
           FDR_plot       = -log10(FDR_onlyhigh),
-          mean_exp_control  = mean_control,
-          mean_exp_genotype = mean_genotype,
           Region            = REGION,
           annotation_level  = CELL_LEVEL,
           cell_type         = STATE_ID,
