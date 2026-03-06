@@ -1,0 +1,9 @@
+name: pipeline_scrna_degs_for_kb
+channels:
+  - conda-forge
+dependencies:
+  - bioconda::bioconductor-edger
+  - leidenalg
+  - python-igraph
+  - scanpy
+  - conda-forge::r-dplyr
