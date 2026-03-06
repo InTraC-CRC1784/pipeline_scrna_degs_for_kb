@@ -46,6 +46,8 @@ if (!is.null(cli_args$threshold)) {
 
 if (!is.null(cli_args$output_file_name)) {
   output_file_name <- cli_args$output_file_name
+  ext <- strsplit(output_file_name, ".", fixed=T)[[1]][-1]
+  output_filtered_file_name <- gsub(paste0("\\.", ext, "$"), paste0("_filtered.", ext), output_file_name, perl=TRUE)
 }
 
 # Cell_Type_Col
@@ -94,6 +96,11 @@ if(!is.null(cli_args$min_cells_per_state)){
   min_cells_per_state <- as.integer(cli_args$min_cells_per_state)
 }
 
+if(!is.null(cli_args$fdr_threshold)){
+  fdr_threshold <- as.numeric(cli_args$fdr_threshold)
+} else {
+  fdr_threshold <- 1
+}
 
 ###-------- 
 
@@ -120,7 +127,7 @@ results_list <- list() # Store results here instead of rbind in a loop
 
 # --- 2. Main Analysis Loop ---
 for (GENOTYPE in as.character(GENOTYPES)) {
-  message("\n>>> Processing Genotype: ", GENOTYPE)
+  message("\n>>> Processing sample category: ", GENOTYPE)
   
   # Get unique states for this specific genotype/control set
   current_states <- unique(meta.data[[Cell_State_Col]])
@@ -260,11 +267,16 @@ if (length(results_list) > 0) {
 
   if (!dir.exists(RESULTS_DIR)) dir.create(RESULTS_DIR, recursive = TRUE)
   write.csv(final_df, file.path(RESULTS_DIR, output_file_name), row.names = FALSE)
+
+  # --- 4. filtering by FDR and saving ---
+  filtered_df <- final_df %>% filter(FDR_onlyhigh <= fdr_threshold)
+  write.csv(filtered_df, file.path(RESULTS_DIR, output_filtered_file_name), row.names = FALSE)
+
   message("SUCCESS: Results saved to ", RESULTS_DIR)
+
 } else {
   message("ERROR: No results generated.")
 }
-
 
 
 

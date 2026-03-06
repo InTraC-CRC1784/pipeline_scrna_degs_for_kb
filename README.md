@@ -42,7 +42,8 @@ python pipeline_main.py \
     --paper AF_LAA_SR_cAF \
     --output-file-name edgeR_results.csv \
     --min-cells 3 \
-    --min-cells-per-state 3
+    --min-cells-per-state 3 \
+    --fdr-threshold 0.05
 ```
 
 **Parameters**
@@ -64,7 +65,14 @@ python pipeline_main.py \
 - output_file_name – Name of result file (default results.csv)
 - min_cells – Minimum cells per sample (for Wilcoxon, default 3)
 - min_cells_per_state – Minimum cells per cell state (for edgeR, default 3)
+- fdr-treshold - cutoff for filtering
 
 ## Output
 The output is a csv file in canonical form for ingestion with the InTraC knowledge graph adapter.
 
+## Example
+
+Using the sepsis data as an example.
+```
+python pipeline_main.py ../data/kaiser_sepsis/sepsis_final_with_celltypes_raw.h5ad --cell-state-col cell_type --condition-col condition --sample-id-col hash.ID --comparison-normal-value control --out-dir ../data/kaiser_sepsis/deg_pipeline/ --region blood --cell-type-col cell_type --species Human --year 2024 --paper Kaiser_SciAdv_2024 --output-file-name edger_results.csv --fdr-threshold 0.05
+```

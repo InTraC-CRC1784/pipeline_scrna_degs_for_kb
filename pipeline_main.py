@@ -58,7 +58,8 @@ def run_edgeR(
     results_dir = "pipeline_out",    
     threshold = 0.0125,
     min_cells_per_state = 3,
-    output_file_name  = "edgeR.csv"
+    output_file_name  = "edgeR.csv",
+    fdr_threshold = 1
 ):
     
     rscript_exe="Rscript"
@@ -86,6 +87,8 @@ def run_edgeR(
     _add_arg(r_cmd, "min_cells_per_state", min_cells_per_state)
     _add_arg(r_cmd, "threshold", str(threshold))
     _add_arg(r_cmd, "output_file_name", output_file_name)
+    _add_arg(r_cmd, "fdr_threshold", fdr_threshold)
+
     subprocess.run(r_cmd, check=True)
     
 def run_wilcoxon(adata_path,                  
@@ -101,7 +104,8 @@ def run_wilcoxon(adata_path,
                  annotation_level = "Unknown",
                  species = "Unknown",
                  paper = "Unknown",
-                 year = "Unknown"
+                 year = "Unknown",
+                 fdr_threshold = 1
                 ):
     wilcoxon_cmd = [
         "python",
@@ -122,6 +126,7 @@ def run_wilcoxon(adata_path,
     _add_arg(wilcoxon_cmd, "species", species)
     _add_arg(wilcoxon_cmd, "paper", paper)
     _add_arg(wilcoxon_cmd, "year", str(year))
+    _add_arg(wilcoxon_cmd, "fdr_threshold", fdr_threshold)
 
     subprocess.run(wilcoxon_cmd, check = True)
 
@@ -146,7 +151,8 @@ def run_full_pipeline(
     paper = "Unknown",
     output_file_name = "results.csv",
     min_cells = 3,
-    min_cells_per_state = 3
+    min_cells_per_state = 3,
+    fdr_threshold = 1
 ):
     """
     Decision between Wilcoxon (<3 samples per condition) 
@@ -183,7 +189,8 @@ def run_full_pipeline(
             species=species,
             paper=paper,
             year=year,
-            min_cells = min_cells
+            min_cells = min_cells,
+            fdr_threshold=fdr_threshold
         )
 
         print("INFO: Wilcoxon finished")
@@ -231,7 +238,8 @@ def run_full_pipeline(
             cell_state_number_path=cell_state_number_path,
             threshold=threshold,
             output_file_name=output_file_name,
-            min_cells_per_state = min_cells_per_state
+            min_cells_per_state = min_cells_per_state,
+            fdr_threshold=fdr_threshold
         )
 
         print("INFO: edgeR finished")
@@ -264,6 +272,7 @@ if __name__ == "__main__":
     parser.add_argument("--output-file-name", default="results.csv")
     parser.add_argument("--min-cells", type=int, default=3)
     parser.add_argument("--min-cells-per-state", type=int, default=3)
+    parser.add_argument("--fdr-threshold", type=float, default=1)
 
     args = parser.parse_args()
 
@@ -285,6 +294,7 @@ if __name__ == "__main__":
         paper=args.paper,
         output_file_name=args.output_file_name,
         min_cells=args.min_cells,
-        min_cells_per_state = args.min_cells_per_state
+        min_cells_per_state = args.min_cells_per_state,
+        fdr_threshold = args.fdr_threshold
     )
 
