@@ -1,16 +1,14 @@
 import os
+import argparse
 from pathlib import Path
-from typing import Optional, Sequence, Dict
+from typing import Sequence, Dict, Optional
 
 import numpy as np
 import pandas as pd
 import scanpy as sc
+from dataclasses import dataclass
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional, Sequence
-
-@dataclass()
+@dataclass
 class PreprocessConfig:
     adata_path: str
     out_dir: str
@@ -20,198 +18,164 @@ class PreprocessConfig:
     cell_states_to_exclude: Sequence[str]
     cell_type_col: str
     cell_type_value: str
-    normalize_target_sum:  1e4 
-    threshold: float 
+    normalize_target_sum: float = 1e4
+    threshold: float = 0.0125
+    gene_index: Optional[str] = None
 
-
-def _ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-
-def paste0(i, j, k):
-    return(str(i)+"__"+str(j)+"__"+str(k))
-
-def save_to_folder(df, folder, filename):
-    # Check if the folder exists, and create it if it doesn't
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-    file_path = os.path.join(folder, filename)
+def save_to_folder(df: pd.DataFrame, folder: str | Path, filename: str):
+    """Ensures directory exists and saves DataFrame to CSV."""
+    folder_path = Path(folder)
+    folder_path.mkdir(parents=True, exist_ok=True)
+    file_path = folder_path / filename
     df.to_csv(file_path)
+    print(f"[INFO] Saved: {file_path}")
 
-
-def correlation_analysis(scanpy_object, column_tosplitby, sum_or_mean):
-    d = {}
-    for cluster_number in np.unique(scanpy_object.obs[column_tosplitby].values):
-        scanpy_object_subset = scanpy_object[scanpy_object.obs[column_tosplitby].isin([cluster_number])]
-
-        if sum_or_mean == "mean":
-            d[cluster_number] = np.squeeze(np.asarray(scanpy_object_subset.raw.X.mean(axis=0)))  # np.log(+1)
-        elif sum_or_mean == "sum":
-            d[cluster_number] = np.squeeze(np.asarray(scanpy_object_subset.raw.X.sum(axis=0)))  # np.log(+1)
-        del scanpy_object_subset
-
-    return d
-
-def _pseudobulk_by_key(adata: sc.AnnData, key_col: str, how: str) -> pd.DataFrame:
-
-    if adata.raw is None:
-        raise ValueError("adata.raw is None. Set adata.raw = adata before calling.")
-
-    groups = pd.unique(adata.obs[key_col].values)
-    d: Dict[str, np.ndarray] = {}
-    for g in groups:
-        sub = adata[adata.obs[key_col].isin([g])]
-        X = sub.raw.X
-        if how == "sum":
-            vec = np.squeeze(np.asarray(X.sum(axis=0)))
-        elif how == "mean":
-            vec = np.squeeze(np.asarray(X.mean(axis=0)))
+def correlation_analysis(adata: sc.AnnData, column_tosplitby: str, how: str) -> pd.DataFrame:
+    """
+    Groups by a metadata column and calculates sum or mean across genes.
+    """
+    data_source = adata.raw if adata.raw is not None else adata
+    
+    res = {}
+    groups = adata.obs[column_tosplitby].unique()
+    
+    for group in groups:
+        # FIX: Add .values to convert the Series to a Numpy array
+        mask = (adata.obs[column_tosplitby] == group).values 
+        
+        sub_X = data_source.X[mask]
+        
+        if how == "mean":
+            val = sub_X.mean(axis=0)
         else:
-            raise ValueError("how must be 'sum' or 'mean'")
-        d[str(g)] = vec
+            val = sub_X.sum(axis=0)
+            
+        res[str(group)] = np.ravel(val)
 
-    df = pd.DataFrame(d, index=adata.raw.var_names)
-    return df
+    return pd.DataFrame(res, index=data_source.var_names)
+    return pd.DataFrame(res, index=data_source.var_names)
 
-def run_preprocessing(cfg: PreprocessConfig) -> dict[str, pd.DataFrame]:
+def run_preprocessing(cfg: PreprocessConfig):
+    print(f"[INFO] Loading AnnData from {cfg.adata_path}...")
+    adata = sc.read_h5ad(cfg.adata_path)
 
-    adata_raw = sc.read_h5ad(str(cfg.adata_path)) 
+    # --- 1. GENE INDEXING (CRITICAL: MUST BE FIRST) ---
+    # We set the index before setting .raw so that .raw inherits the correct gene names.
+    target_index_col = None
 
-    if adata_raw.var_names.astype(str).str.fullmatch(r"\d+").all():
-        for col in ["features", "_index"]:
-            if col in adata_raw.var.columns:
-                # Only replace if the column actually contains non-numeric gene names
-                if not adata_raw.var[col].astype(str).str.fullmatch(r"\d+").all():
-                    adata_raw.var_names = adata_raw.var[col].astype(str)
-                    adata_raw.var_names_make_unique()
-                    print(f"[INFO] Fixed numeric var_names using column '{col}'")
-                    break
+    if cfg.gene_index and cfg.gene_index in adata.var.columns:
+        target_index_col = cfg.gene_index
+    # Fallback: if index is numeric (0, 1, 2...), try to find a name column
+    elif adata.var_names.astype(str).str.fullmatch(r"\d+").all():
+        for col in ["features", "gene_ids", "symbols", "_index"]:
+            if col in adata.var.columns and not adata.var[col].astype(str).str.fullmatch(r"\d+").all():
+                target_index_col = col
+                break
 
-    # Standardize cell state names
-    if cfg.cell_state_col in adata_raw.obs.columns:         
-        adata_raw.obs[cfg.cell_state_col] = (
-            adata_raw.obs[cfg.cell_state_col]
+    if target_index_col:
+        print(f"[INFO] Setting gene index to column: '{target_index_col}'")
+        adata.var_names = adata.var[target_index_col].astype(str)
+        adata.var_names_make_unique()
+
+    # --- 2. METADATA VALIDATION & CLEANING ---
+    # Check if cell_type_col exists; if not, fill with default value
+    if cfg.cell_type_col not in adata.obs.columns:
+        print(f"[WARNING] '{cfg.cell_type_col}' missing. Creating with value '{cfg.cell_type_value}'.")
+        adata.obs[cfg.cell_type_col] = cfg.cell_type_value
+
+    # Standardize cell state names (remove special characters for downstream R/edgeR compatibility)
+    if cfg.cell_state_col in adata.obs.columns:
+        adata.obs[cfg.cell_state_col] = (
+            adata.obs[cfg.cell_state_col]
             .astype(str)
-            .str.replace(r"[^A-Za-z0-9_]+", "_", regex=True)  
+            .str.replace(r"[^A-Za-z0-9_]+", "_", regex=True)
             .astype("category")
         )
+    else:
+        raise ValueError(f"Required column '{cfg.cell_state_col}' not found in adata.obs")
 
-    # Optional cell state exclusions
-    if cfg.cell_states_to_exclude and cfg.cell_state_col in adata_raw.obs.columns:
-        mask = ~adata_raw.obs[cfg.cell_state_col].isin(list(cfg.cell_states_to_exclude))
-        adata_raw = adata_raw[mask].copy()
+    # Filter out specific cell states
+    if cfg.cell_states_to_exclude:
+        initial_count = adata.n_obs
+        adata = adata[~adata.obs[cfg.cell_state_col].isin(cfg.cell_states_to_exclude)].copy()
+        print(f"[INFO] Excluded {initial_count - adata.n_obs} cells based on exclusion list.")
 
+    # Fix .raw slot now that indices and cell-filtering are finalized
+    adata.raw = adata
 
-    if cfg.cell_type_col in adata_raw.obs.columns:
-        pass   
-    else: adata_raw.obs[cfg.cell_type_col] = cfg.cell_type_value  
-
-
-    global_all = adata_raw
-    global_all.raw = global_all
-
-
-    sample_col_pool = cfg.sample_id_col
-
-    sample_col_gp = cfg.sample_id_col
-    if sample_col_gp not in global_all.obs.columns and "Sample_ID" in global_all.obs.columns:
-        sample_col_gp = "Sample_ID"
-
-
-    global_all.obs['pool_key'] = [paste0(i, j, k) for i, j, k in zip(global_all.obs[cfg.condition_col],
-                                                                     global_all.obs[cfg.cell_state_col],
-                                                                     global_all.obs[cfg.sample_id_col]
-                                                                     )]
-
-    global_subset = global_all.X[0:100, 0:100]
-
-    global_all.raw = global_all
-    x = correlation_analysis(global_all, 'pool_key', 'sum')
-    x = pd.DataFrame(x)
-    x.index = global_all.var.index
-
-    save_to_folder(x, cfg.out_dir, 'pseudobulk_whole.csv')
-    global_all.obs['Gene_Patient']=[str(i) + "__" + str(j) + "__" + str(k) for i, j, k in zip(
-                                                            global_all.obs[cfg.condition_col],  # 42
-                                                               global_all.obs[cfg.cell_state_col],
-                                                               global_all.obs[sample_col_gp])]
-
-    subset_ = sc.AnnData(
-        global_all[:, global_all.var.index].raw.X,  #
-        obs=global_all.obs,
-        var=global_all[:, global_all.var.index].raw.var
+    # --- 3. PSEUDOBULK (RAW SUMS) ---
+    # Creating a unique key for grouping (vectorized string concatenation is faster)
+    adata.obs["pool_key"] = (
+        adata.obs[cfg.condition_col].astype(str) + "__" +
+        adata.obs[cfg.cell_state_col].astype(str) + "__" +
+        adata.obs[cfg.sample_id_col].astype(str)
     )
-
-    sc.pp.normalize_total(subset_, target_sum=cfg.normalize_target_sum)
-    sc.pp.log1p(subset_)
     
-    subset_.raw = subset_
-    x = correlation_analysis(subset_, 'Gene_Patient', 'mean') 
-    x = pd.DataFrame(x)
-    x.index = global_all.var.index
+    df_raw_sum = correlation_analysis(adata, "pool_key", "sum")
+    save_to_folder(df_raw_sum, cfg.out_dir, "pseudobulk_whole.csv")
 
-    save_to_folder(x, cfg.out_dir, 'pseudobulk_filtering.csv')
+    # --- 4. NORMALIZATION & THRESHOLD FILTERING ---
+    # Work on a copy to keep the main 'adata' raw for other uses
+    norm_adata = adata.copy()
+    sc.pp.normalize_total(norm_adata, target_sum=cfg.normalize_target_sum)
+    sc.pp.log1p(norm_adata)
 
-    df_thresholded = x.copy()
-
+    # Use the same grouping logic for mean expression
+    norm_adata.obs["Gene_Patient"] = adata.obs["pool_key"]
+    df_norm_mean = correlation_analysis(norm_adata, "Gene_Patient", "mean")
+    
+    # Thresholding: set low values to 0 and drop genes that are 0 everywhere
+    df_thresholded = df_norm_mean.copy()
     df_thresholded[np.abs(df_thresholded) < cfg.threshold] = 0
-
     df_clean = df_thresholded.loc[~(df_thresholded == 0).all(axis=1)]
 
-    pseudobulk_filtering = _pseudobulk_by_key(subset_, "Gene_Patient", how="mean")
-    save_to_folder(pseudobulk_filtering, Path(cfg.out_dir), "pseudobulk_filtering.csv")
+    save_to_folder(df_clean, cfg.out_dir, "pseudobulk_filtering.csv")
 
-    x = pd.Series(global_all.obs[cfg.cell_type_col].values,
-                  index=global_all.obs[cfg.cell_state_col]).to_dict()
-    x = pd.DataFrame.from_dict(x, orient='index')
+    # --- 5. EXPORT SUMMARY TABLES ---
+    # Map Cell State -> Cell Type
+    translation = (
+        adata.obs[[cfg.cell_state_col, cfg.cell_type_col]]
+        .drop_duplicates()
+        .set_index(cfg.cell_state_col)
+    )
+    save_to_folder(translation, cfg.out_dir, "cell_state_translation_table.csv")
 
-    save_to_folder(x, cfg.out_dir, 'cell_state_translation_table.csv')
+    # Frequency Tables (Crosstabs)
+    ct_counts = pd.crosstab(adata.obs[cfg.cell_type_col], adata.obs[cfg.sample_id_col])
+    cs_counts = pd.crosstab(adata.obs[cfg.cell_state_col], adata.obs[cfg.sample_id_col])
+    
+    save_to_folder(ct_counts, cfg.out_dir, "cell_type_number.csv")
+    save_to_folder(cs_counts, cfg.out_dir, "cell_state_number.csv")
 
-    pd.crosstab(global_all.obs[cfg.cell_type_col],
-                global_all.obs[cfg.cell_state_col]
-                )
-
-    x = pd.crosstab(global_all.obs[cfg.cell_type_col],
-                     global_all.obs[cfg.sample_id_col])
-
-    y = pd.crosstab(global_all.obs[cfg.cell_state_col],
-                    global_all.obs[cfg.sample_id_col])
-
-    save_to_folder(x, cfg.out_dir, 'cell_type_number.csv')
-    save_to_folder(y, cfg.out_dir, 'cell_state_number.csv')
-
-
+    print(f"\n[SUCCESS] Preprocessing complete. Results are in: {cfg.out_dir}")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Preprocess Scanpy object for Pseudobulk analysis.")
 
-    import argparse
+    parser.add_argument("adata_path", help="Path to the input .h5ad file")
+    parser.add_argument("--out-dir", default="./edgeR_results", help="Directory to save CSVs")
+    parser.add_argument("--cell-state-col", required=True, help="Column name for cell states/clusters")
+    parser.add_argument("--condition-col", required=True, help="Column name for experimental conditions")
+    parser.add_argument("--sample-id-col", required=True, help="Column name for sample/patient IDs")
+    parser.add_argument("--threshold", type=float, default=0.0125, help="Expression threshold for filtering")
+    parser.add_argument("--cell-states-to-exclude", nargs="*", default=[], help="List of cell states to drop")
+    parser.add_argument("--cell-type-col", required=True, help="Column name for broad cell types")
+    parser.add_argument("--cell-type-val", default="Unknown", help="Default value if cell_type_col is missing")
+    parser.add_argument("--gene_index", default=None, help="Optional: .var column to use as gene names")
 
-    p = argparse.ArgumentParser()
-    p.add_argument("adata_path", help="Path to .h5ad")
-    p.add_argument("--out-dir", default="./edgeR_results")
-    p.add_argument("--cell-state-col")
-    p.add_argument("--condition-col")
-    p.add_argument("--sample-id-col")
-    p.add_argument("--threshold", type=float, default=0.0125)
-    p.add_argument("--cell-states-to-exclude", nargs="*",default=[])
-    p.add_argument("--cell-type-col", type = str)
-    p.add_argument("--cell-type-val", type = str)
-    args = p.parse_args()
+    args = parser.parse_args()
 
-    cfg = PreprocessConfig(
+    config = PreprocessConfig(
         adata_path=args.adata_path,
         out_dir=args.out_dir,
-
         cell_state_col=args.cell_state_col,
         condition_col=args.condition_col,
         sample_id_col=args.sample_id_col,
-
         cell_states_to_exclude=args.cell_states_to_exclude,
-
         cell_type_col=args.cell_type_col,
         cell_type_value=args.cell_type_val,
-
-        normalize_target_sum=1e4,
         threshold=args.threshold,
+        gene_index=args.gene_index,
     )
 
-    run_preprocessing(cfg)
+    run_preprocessing(config)
