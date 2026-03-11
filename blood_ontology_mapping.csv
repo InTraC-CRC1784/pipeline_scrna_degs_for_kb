@@ -1,0 +1,9 @@
+cell_type_name,ontology_id,ontology_name
+B_cells,CL:0000236,B cell
+Monocytes,CL:0000576,monocyte
+NK_cells,CL:0000623,natural killer cell
+Neutrophils,CL:0000775,neutrophil
+T_cells,CL:0000084,T cell
+Dentritic_cells,CL:0001056,dendritic cell
+Platelets,CL:0000233,platelet
+RBCs,CL:0000232,erythrocyte
