@@ -7,3 +7,4 @@ dependencies:
   - python-igraph
   - scanpy
   - conda-forge::r-dplyr
+  - conda-forge::r-tidyr

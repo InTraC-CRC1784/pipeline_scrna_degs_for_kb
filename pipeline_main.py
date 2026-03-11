@@ -1,6 +1,12 @@
 import os
 import subprocess
 import scanpy as sc
+import sys
+import yaml
+import pandas as pd
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
 
 def _add_arg(cmd, key, value):
     """
@@ -26,7 +32,7 @@ def run_preprocessing(
 ):
     preprocess_cmd = [
         "python",
-        "01_count_data_preprocessing_edgeR.py",
+        "%s/01_count_data_preprocessing_edgeR.py" % BASE_DIR,
         adata_filepath,
     ]
     _add_arg(preprocess_cmd, "out-dir", out_dir)
@@ -71,7 +77,7 @@ def run_edgeR(
 ):
     r_cmd = [
         "Rscript",
-        "02_manual_test_edgeR.r",
+        "%s/02_manual_test_edgeR.r" % BASE_DIR,
     ]
 
     _add_arg(r_cmd, "Cell_Type_Col", cell_type_col)
@@ -106,6 +112,10 @@ def run_edgeR(
 
     subprocess.run(r_cmd, check=True)
 
+def convert_yaml_to_df(yaml, index_name):
+    df = (pd.DataFrame(yaml).transpose().reset_index().rename(columns={"index": index_name}))
+    return(df)
+    
 def run_full_pipeline(
     adata_filepath,
     cell_state_col,
@@ -198,11 +208,11 @@ def run_full_pipeline(
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run full scRNAseq pipeline")
-    parser.add_argument("adata_filepath")
-    parser.add_argument("--cell-state-col", required=True)
-    parser.add_argument("--condition-col", required=True)
-    parser.add_argument("--sample-id-col", required=True)
-    parser.add_argument("--comparison-normal-value", required=True)
+    parser.add_argument("--adata-filepath")
+    parser.add_argument("--cell-state-col")
+    parser.add_argument("--condition-col")
+    parser.add_argument("--sample-id-col")
+    parser.add_argument("--comparison-normal-value")
     parser.add_argument("--out-dir", default="pipeline_out")
     parser.add_argument("--region", default="Unknown")
     parser.add_argument("--threshold", type=float, default=0.0125)
@@ -227,35 +237,92 @@ if __name__ == "__main__":
     parser.add_argument("--min-cells-per-state", type=int, default=3)
     parser.add_argument("--fdr-threshold", type=float, default=1)
     parser.add_argument("--gene-index", default=None)
+    
+    parser.add_argument("--metadata-file", default=None)
 
+    required = ["cell_state_col", "condition_col", "sample_id_col", "comparison_normal_value"]
+    
     args = parser.parse_args()
-
-    run_full_pipeline(
-        adata_filepath=args.adata_filepath,
-        cell_state_col=args.cell_state_col,
-        condition_col=args.condition_col,
-        sample_id_col=args.sample_id_col,
-        comparison_normal_value=args.comparison_normal_value,
-        out_dir=args.out_dir,
-        region=args.region,
-        threshold=args.threshold,
-        cell_type_col=args.cell_type_col,
-        cellstates_excluded=args.cellstates_excluded,
-        cell_type_val=args.cell_type_val,
-        cell_level=args.cell_level,
-        species=args.species,
-        year=args.year,
-        study_name=args.study_name, # Updated argument name
-        study_id=args.study_id,
-        disease=args.disease,
-        disease_id=args.disease_id,
-        tissue=args.tissue,
-        tissue_id=args.tissue_id,
-        ontology_path=args.ontology_path,
-        gene_mapping_path=args.gene_mapping_path,
-        output_file_name=args.output_file_name,
-        min_cells=args.min_cells,
-        min_cells_per_state=args.min_cells_per_state,
-        fdr_threshold=args.fdr_threshold,
-        gene_index=args.gene_index
-    )
+    
+    if (args.metadata_file is None):
+        # using arguments from the command line
+        if (pd.sum([(x in args) for x in require]) < len(required)):
+            print("Required argument are: %s at leaset one is missing" % (", ").join(required))
+            sys.exit(1)
+        
+        run_full_pipeline(
+            adata_filepath=args.adata_filepath,
+            cell_state_col=args.cell_state_col,
+            condition_col=args.condition_col,
+            sample_id_col=args.sample_id_col,
+            comparison_normal_value=args.comparison_normal_value,
+            out_dir=args.out_dir,
+            region=args.region,
+            threshold=args.threshold,
+            cell_type_col=args.cell_type_col,
+            cellstates_excluded=args.cellstates_excluded,
+            cell_type_val=args.cell_type_val,
+            cell_level=args.cell_level,
+            species=args.species,
+            year=args.year,
+            study_name=args.study_name, # Updated argument name
+            study_id=args.study_id,
+            disease=args.disease,
+            disease_id=args.disease_id,
+            tissue=args.tissue,
+            tissue_id=args.tissue_id,
+            ontology_path=args.ontology_path,
+            gene_mapping_path=args.gene_mapping_path,
+            output_file_name=args.output_file_name,
+            min_cells=args.min_cells,
+            min_cells_per_state=args.min_cells_per_state,
+            fdr_threshold=args.fdr_threshold,
+            gene_index=args.gene_index
+        )
+    else:
+        # use the config from the yaml file
+        with open(args.metadata_file, "r") as f:
+            cfg = yaml.safe_load(f)
+        # check if ontology_path is given then use this, if not create from yaml
+        study = cfg["study"]
+        comparison = cfg["comparison"]
+        obs = cfg["anndata_obs_columns"]
+        
+        if ('ontology_path' in obs):
+            ontology_path = obs['ontology_path']
+        else:
+            os.makedirs(cfg['out_dir'], exist_ok=True)
+            ontology_path = "%s/ontology_map.csv" % cfg['out_dir']
+            ontology_map = convert_yaml_to_df(obs['cell_ontology_map'], "cell_type_name")
+            print(ontology_map)
+            ontology_map.to_csv(ontology_path)
+        
+        run_full_pipeline(
+            adata_filepath=cfg['adata_filepath'],
+            cell_state_col=obs['cell_state_col'],
+            condition_col=obs['condition_col'],
+            sample_id_col=obs['sample_id_col'],
+            comparison_normal_value=comparison['comparison_normal_value'],
+            out_dir=cfg["out_dir"],
+            region=study["region"],
+            threshold=comparison["threshold"],
+            cell_type_col=obs["cell_type_col"],
+            cellstates_excluded=obs["cellstates_excluded"],
+            cell_type_val=obs["cell_type_val"],
+            cell_level=obs["cell_level"],
+            species=study["species"],
+            year=study["year"],
+            study_name=study["study_name"],
+            study_id=study["study_id"],
+            disease=study["disease"],
+            disease_id=study["disease_id"],
+            tissue=study["tissue"],
+            tissue_id=study["tissue_id"],
+            ontology_path=ontology_path,
+            gene_mapping_path=None,
+            output_file_name=cfg["output_file_name"],
+            min_cells=args.min_cells,
+            min_cells_per_state=args.min_cells_per_state,
+            fdr_threshold=float(comparison["fdr_threshold"]),
+            gene_index=args.gene_index
+        )

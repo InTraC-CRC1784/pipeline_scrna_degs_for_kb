@@ -18,7 +18,7 @@ conda activate pipeline_scrna_degs_for_kb
 
 To create the config file use these commands
 ```
-conda create -n pipeline_scrna_degs_for_kb -c conda-forge scanpy python-igraph leidenalg bioconda::bioconductor-edger r-dplyr
+conda create -n pipeline_scrna_degs_for_kb -c conda-forge scanpy python-igraph leidenalg bioconda::bioconductor-edger r-dplyr r-tidyr
 conda env export --name pipeline_scrna_degs_for_kb --from-history > environment.yaml
 ```
  

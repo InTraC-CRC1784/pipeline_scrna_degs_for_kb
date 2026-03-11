@@ -63,16 +63,17 @@ def run_preprocessing(cfg: PreprocessConfig):
     # We set the index before setting .raw so that .raw inherits the correct gene names.
     target_index_col = None
 
-    if cfg.gene_index and cfg.gene_index in adata.var.columns:
-        target_index_col = cfg.gene_index
-    # Fallback: if index is numeric (0, 1, 2...), try to find a name column
-    elif adata.var_names.astype(str).str.fullmatch(r"\d+").all():
-        for col in ["features", "gene_ids", "symbols", "_index"]:
-            if col in adata.var.columns and not adata.var[col].astype(str).str.fullmatch(r"\d+").all():
-                target_index_col = col
-                break
+    if cfg.gene_index is not None:
+        if cfg.gene_index in adata.var.columns:
+            target_index_col = cfg.gene_index
+        # Fallback: if index is numeric (0, 1, 2...), try to find a name column
+        elif adata.var_names.astype(str).str.fullmatch(r"\d+").all():
+            for col in ["features", "gene_ids", "symbols", "_index"]:
+                if col in adata.var.columns and not adata.var[col].astype(str).str.fullmatch(r"\d+").all():
+                    target_index_col = col
+                    break
 
-    if target_index_col:
+    if target_index_col is not None:
         print(f"[INFO] Setting gene index to column: '{target_index_col}'")
         adata.var_names = adata.var[target_index_col].astype(str)
         adata.var_names_make_unique()

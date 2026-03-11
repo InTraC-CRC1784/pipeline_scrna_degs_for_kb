@@ -41,6 +41,7 @@ Condition_Col               <- cli_args$Condition_Col %||% "condition"
 Sample_Information_Col      <- cli_args$Sample_Information_Col %||% NA
 comparison_normal_value     <- cli_args$comparison_normal_value %||% "control"
 min_cells_per_state         <- as.integer(cli_args$min_cells_per_state %||% 5)
+fdr_threshold               <- as.numeric(cli_args$fdr_threshold  %||% 1)
 
 # --- Metadata Arguments ---
 species_arg    <- cli_args$species    %||% NA
@@ -52,9 +53,17 @@ disease_arg    <- cli_args$disease    %||% NA
 tissue_arg     <- cli_args$tissue     %||% NA
 tissue_id_arg  <- cli_args$tissue_id  %||% NA
 
+# filename for filtered output
+ext <- strsplit(output_file_name, ".", fixed=T)[[1]][-1]
+output_filtered_file_name <- gsub(paste0("\\.", ext, "$"), paste0("_filtered.", ext), output_file_name, perl=TRUE)
+
 # --- 1. Data Loading ---
+cat("Loading data\n")
+cat(paste0("Pseudobulk: ", pb_whole_path, "\n"))
 x <- read.csv(pb_whole_path, row.names = 1, check.names = FALSE)
+cat(paste0("Gene filtering list: ", pb_filtering_path, "\n"))
 genes_tofilter <- read.csv(pb_filtering_path, row.names = 1, check.names = FALSE)
+cat(paste0("cell state to cell type mapping: ", cell_state_translation_path, "\n"))
 CELLTYPE_STATE <- read.csv(cell_state_translation_path, check.names = FALSE)
 colnames(CELLTYPE_STATE) <- c(Cell_State_Col, Cell_Type_Col)
 
@@ -70,6 +79,7 @@ GENOTYPES <- unique(meta.data[[Condition_Col]][meta.data[[Condition_Col]] != com
 results_list <- list()
 
 # --- 2. Main Analysis Loop ---
+cat("Running edgeR\n")
 for (GENOTYPE in as.character(GENOTYPES)) {
   current_states <- unique(meta.data[[Cell_State_Col]])
   for (STATE_ID in as.character(current_states)) {
@@ -139,6 +149,7 @@ for (GENOTYPE in as.character(GENOTYPES)) {
 }
 
 # --- 3. Final Formatting & Save ---
+cat("formatting results\n")
 if (length(results_list) > 0) {
   final_df <- do.call(rbind, results_list)
   rownames(final_df) <- NULL
@@ -193,6 +204,11 @@ if (length(results_list) > 0) {
   if (!dir.exists(RESULTS_DIR)) dir.create(RESULTS_DIR, recursive = TRUE)
   write.csv(final_df, file.path(RESULTS_DIR, output_file_name), row.names = FALSE)
   message("SUCCESS: Results saved to ", RESULTS_DIR)
+    
+  # --- filtering by FDR and saving ---
+  filtered_df <- final_df %>% filter(adj_p <= fdr_threshold)
+  write.csv(filtered_df, file.path(RESULTS_DIR, output_filtered_file_name), row.names = FALSE)
+    
 } else {
   message("ERROR: No results generated.")
 }
