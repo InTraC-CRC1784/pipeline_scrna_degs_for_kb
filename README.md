@@ -19,7 +19,7 @@ conda activate pipeline_scrna_degs_for_kb
 To create the config file use these commands
 ```
 conda create -n pipeline_scrna_degs_for_kb -c conda-forge scanpy python-igraph leidenalg bioconda::bioconductor-edger r-dplyr r-tidyr
-conda env export --name pipeline_scrna_degs_for_kb --from-history > environment.yaml
+conda env export --name pipeline_scrna_degs_for_kb --from-history | grep -v "prefix:" > environment.yaml
 ```
  
 ## Execution
@@ -83,6 +83,22 @@ The output is a csv file in canonical form for ingestion with the InTraC knowled
 ## Example
 
 Using the sepsis data as an example.
+
+Download the data from NEFELI using this link:
+
+Execute using the yaml metadata file from NEFELI (replace the file path for the pipeline accordingly):
+
 ```
-python pipeline_main.py ../data/kaiser_sepsis/sepsis_final_with_celltypes_raw.h5ad --cell-state-col cell_type --condition-col condition --sample-id-col hash.ID --comparison-normal-value control --out-dir ../data/kaiser_sepsis/deg_pipeline/ --region blood --cell-type-col cell_type --species Human --year 2024 --paper Kaiser_SciAdv_2024 --output-file-name edger_results.csv --fdr-threshold 0.05
+python ~/work/intrac_agent/pipeline_scrna_degs_for_kb/pipeline_main.py --metadata-file kaiser_sepsis.yaml
+```
+
+Or execute using command line parameters:
+
+```
+DATASET_PATH=../data/kaiser_sepsis/
+python pipeline_main.py --adata-filepath $DATASET_PATH/sepsis_final_with_celltypes_raw.h5ad \ 
+  --cell-state-col cell_type --condition-col condition --sample-id-col hash.ID \ 
+  --comparison-normal-value control --out-dir $DATASET_PATH/deg_pipeline/ \ 
+  --region blood --cell-type-col cell_type --species Human --year 2024 \ 
+  --paper Kaiser_SciAdv_2024 --output-file-name edger_results.csv --fdr-threshold 0.05
 ```
