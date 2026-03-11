@@ -25,7 +25,7 @@ conda env export --name pipeline_scrna_degs_for_kb --from-history | grep -v "pre
 ## Execution
 ```
 python your_script_name.py \
-    "dataset.h5ad" \
+    --adata-filepath "dataset.h5ad" \
     --cell-state-col "cell_type" \
     --condition-col "condition" \
     --sample-id-col "sample_ID" \
